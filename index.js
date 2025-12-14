@@ -15,6 +15,9 @@ const io = new Server(server);
 
 io.on('connection', (socket) => {
   console.log('a user connected');
+  socket.on('disconnect', () => {
+    console.log('user disconnected');
+  });
 });
 
 const rooms = new Map();
@@ -32,6 +35,6 @@ app.get('/room/:id', (req, res) => {
 })
 
 const port = 3000
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Example app listening on port ${port}`)
 })

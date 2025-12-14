@@ -38,6 +38,16 @@ async function createRoom() {
   registerPeerConnectionListeners();
 
   // Add code for creating a room here
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+
+  const room = { offer: { type: offer.type, sdp: offer.sdp } };
+
+  const resp = await fetch('/room', { method: 'POST', body: room });
+  if (resp.status == 200) {
+    const json = await resp.json();
+    document.querySelector('#currentRoom').innerText = `Current room is ${json.id} - You are the caller!`;
+  }
   
   // Code for creating room above
   

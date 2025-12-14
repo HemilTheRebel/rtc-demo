@@ -19,49 +19,76 @@ let remoteStream = null;
 let roomDialog = null;
 let roomId = null;
 
+const socket = io();
+
 function init() {
   document.querySelector('#cameraBtn').addEventListener('click', openUserMedia);
   document.querySelector('#hangupBtn').addEventListener('click', hangUp);
   document.querySelector('#createBtn').addEventListener('click', createRoom);
   document.querySelector('#joinBtn').addEventListener('click', joinRoom);
+  document.querySelector('#urlSubmit').addEventListener('click', changeUrl);
+
   roomDialog = new mdc.dialog.MDCDialog(document.querySelector('#room-dialog'));
+
+  const viewer = document.getElementById('viewer');
+
+  socket.on('urlChange', (msg) => {
+    viewer.src = msg.src;
+  })
+}
+
+function changeUrl() {
+  const url = document.getElementById('url').value.trim();
+  try {
+    new URL(url);
+  } catch (e) {
+    console.error(e);
+    return;
+  }
+  
+  socket.emit('urlChange', {src: url});
 }
 
 async function createRoom() {
   document.querySelector('#createBtn').disabled = true;
   document.querySelector('#joinBtn').disabled = true;
-  const db = firebase.firestore();
 
   console.log('Create PeerConnection with configuration: ', configuration);
   peerConnection = new RTCPeerConnection(configuration);
 
   registerPeerConnectionListeners();
 
-  // Add code for creating a room here
+  localStream.getTracks().forEach(track => {
+    peerConnection.addTrack(track, localStream);
+  });
+
+  // Code for collecting ICE candidates below
+  peerConnection.addEventListener('icecandidate', event => {
+    if (!event.candidate) {
+      console.log('Got final candidate!');
+      return;
+    }
+    console.log('Got candidate: ', event.candidate);
+    socket.emit('callerCandidates', event.candidate.toJSON());
+  });
+  // Code for collecting ICE candidates above
+
+  // Code for creating a room below
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
 
   const room = { offer: { type: offer.type, sdp: offer.sdp } };
 
-  const resp = await fetch('/room', { method: 'POST', body: room });
+  const resp = await fetch('/room', { 
+    method: 'POST', 
+    body: JSON.stringify(room),
+    headers: { 'Content-Type': 'application/json' },
+  });
   if (resp.status == 200) {
     const json = await resp.json();
     document.querySelector('#currentRoom').innerText = `Current room is ${json.id} - You are the caller!`;
   }
-  
-  // Code for creating room above
-  
-  localStream.getTracks().forEach(track => {
-    peerConnection.addTrack(track, localStream);
-  });
-
-  // Code for creating a room below
-
   // Code for creating a room above
-
-  // Code for collecting ICE candidates below
-
-  // Code for collecting ICE candidates above
 
   peerConnection.addEventListener('track', event => {
     console.log('Got remote track:', event.streams[0]);
@@ -72,12 +99,24 @@ async function createRoom() {
   });
 
   // Listening for remote session description below
-
+  socket.on('answer', async (msg) => {
+    if (!peerConnection.currentRemoteDescription && msg) {
+      console.log('answer: ', msg);
+      const answer = new RTCSessionDescription(msg);
+      console.log('Set remote description: ', answer);
+      await peerConnection.setRemoteDescription(answer);
+    }
+  });
   // Listening for remote session description above
 
   // Listen for remote ICE candidates below
-
+  socket.on('calleeCandidates', async (msg) => {
+    console.log(`Got new remote ICE candidate: ${JSON.stringify(msg)}`);
+    await peerConnection.addIceCandidate(new RTCIceCandidate(msg));
+  });
   // Listen for remote ICE candidates above
+
+  document.getElementById('console').style.display = 'flex';
 }
 
 function joinRoom() {
@@ -96,20 +135,29 @@ function joinRoom() {
 }
 
 async function joinRoomById(roomId) {
-  const db = firebase.firestore();
-  const roomRef = db.collection('rooms').doc(`${roomId}`);
-  const roomSnapshot = await roomRef.get();
-  console.log('Got room:', roomSnapshot.exists);
+  const resp = await fetch(`/room/${roomId}`);
+  const json = await resp.json();
 
-  if (roomSnapshot.exists) {
-    console.log('Create PeerConnection with configuration: ', configuration);
-    peerConnection = new RTCPeerConnection(configuration);
-    registerPeerConnectionListeners();
-    localStream.getTracks().forEach(track => {
-      peerConnection.addTrack(track, localStream);
-    });
+  if (!json.data) {
+    console.error('room id not found');
+  }
+  
+  console.log('Create PeerConnection with configuration: ', configuration);
+  peerConnection = new RTCPeerConnection(configuration);
+  registerPeerConnectionListeners();
+  localStream.getTracks().forEach(track => {
+    peerConnection.addTrack(track, localStream);
+  });
 
     // Code for collecting ICE candidates below
+    peerConnection.addEventListener('icecandidate', event => {
+      if (!event.candidate) {
+        console.log('Got final candidate!');
+        return;
+      }
+      console.log('Got callee candidate: ', event.candidate);
+      socket.emit('calleeCandidates', event.candidate.toJSON());
+    });
 
     // Code for collecting ICE candidates above
 
@@ -122,13 +170,24 @@ async function joinRoomById(roomId) {
     });
 
     // Code for creating SDP answer below
+    const offer = json.data.offer;
+    console.log('Got offer:', offer);
+    await peerConnection.setRemoteDescription(offer);
+    const answer = await peerConnection.createAnswer();
+    console.log('Created answer:', answer);
+    await peerConnection.setLocalDescription(answer);
+
+    const roomWithAnswer = { type: answer.type, sdp: answer.sdp }
+    socket.emit('answer', roomWithAnswer);
 
     // Code for creating SDP answer above
 
     // Listening for remote ICE candidates below
-
+    socket.on('callerCandidates', async (msg) => {
+      console.log(`Got new remote ICE candidate: ${JSON.stringify(msg)}`);
+          await peerConnection.addIceCandidate(new RTCIceCandidate(msg));
+    });
     // Listening for remote ICE candidates above
-  }
 }
 
 async function openUserMedia(e) {
@@ -167,21 +226,6 @@ async function hangUp(e) {
   document.querySelector('#createBtn').disabled = true;
   document.querySelector('#hangupBtn').disabled = true;
   document.querySelector('#currentRoom').innerText = '';
-
-  // Delete room on hangup
-  if (roomId) {
-    const db = firebase.firestore();
-    const roomRef = db.collection('rooms').doc(roomId);
-    const calleeCandidates = await roomRef.collection('calleeCandidates').get();
-    calleeCandidates.forEach(async candidate => {
-      await candidate.delete();
-    });
-    const callerCandidates = await roomRef.collection('callerCandidates').get();
-    callerCandidates.forEach(async candidate => {
-      await candidate.delete();
-    });
-    await roomRef.delete();
-  }
 
   document.location.reload(true);
 }

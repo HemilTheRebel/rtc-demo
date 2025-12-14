@@ -11,9 +11,6 @@
     <link rel="stylesheet" type="text/css" href="main.css">
 
     <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
-    <script>
-        const socket = io();
-    </script>
 </head>
 <body>
 <h1>Welcome to FirebaseRTC!</h1>
@@ -42,6 +39,14 @@
     <video id="localVideo" muted autoplay playsinline></video>
     <video id="remoteVideo" autoplay playsinline></video>
 </div>
+
+<div id="console" style="display: none;">
+    <input id="url" style="flex: 1;"/>
+    <button id="urlSubmit" class="mdc-button mdc-button--raised">
+        <span class="mdc-button__label">Submit</span>
+    </button>
+</div>
+
 <div class="mdc-dialog"
      id="room-dialog"
      role="alertdialog"
@@ -72,6 +77,9 @@
     </div>
     <div class="mdc-dialog__scrim"></div>
 </div>
+
+<iframe id="viewer" style="width: 1600px; height: 900px;"></iframe>
+
 <script src="app.js"></script>
 </body>
 </html>
